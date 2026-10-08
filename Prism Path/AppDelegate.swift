@@ -17,6 +17,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     private var mergeTimerWorkItem: DispatchWorkItem?
     private var didStartAppsFlyer = false
     private var launchInternetMonitor: NWPathMonitor?
+    private var hasSatisfiedNetworkPath = false
     private var launchStateObservation: NSKeyValueObservation?
     private var mainNavigationController: UINavigationController?
     private weak var rootBrowser: ContentBrowserController?
@@ -430,6 +431,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
             self.launchInternetMonitor?.cancel()
             self.launchInternetMonitor = nil
+
+            DispatchQueue.main.async {
+                if path.status == .satisfied {
+                    self.hasSatisfiedNetworkPath = true
+                    return
+                }
+                self.presentLaunchOfflineState()
+            }
         }
         monitor.start(queue: DispatchQueue(label: "com.prismpath.launchInternetCheck"))
     }
@@ -1346,8 +1355,33 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         return applyDestinationToCurrentSession
     }
 
+    private func presentLaunchOfflineState() {
+        if LaunchState.shared.isPermanentNativeFlow() {
+            updateLaunchPresentation()
+            return
+        }
+        if LaunchState.shared.browserDestination == nil,
+           LaunchState.shared.pendingDestination == nil,
+           !LaunchState.shared.isPrePermissionVisible,
+           !LaunchState.shared.isPushNavigationActive() {
+            if !LaunchState.shared.activateLastSuccessfulDestinationAsFallback() {
+                LaunchState.shared.showNoInternetMessage()
+            }
+        }
+        updateLaunchPresentation()
+    }
+
     private func showNoInternetMessageIfNeeded(_ error: Error) {
-        _ = error
+        guard let networkError = error as? URLError else { return }
+        let offlineCodes: [URLError.Code] = [
+            .notConnectedToInternet,
+            .networkConnectionLost
+        ]
+        guard offlineCodes.contains(networkError.code) else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.hasSatisfiedNetworkPath else { return }
+            self.presentLaunchOfflineState()
+        }
     }
 
     private func browserDestination(from payload: [String: Any]) -> String? {
